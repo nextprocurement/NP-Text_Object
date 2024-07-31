@@ -10,12 +10,13 @@ from dspy.datasets import Dataset
 import pathlib
 from sklearn.model_selection import train_test_split
 from dspy.teleprompt import BootstrapFewShotWithRandomSearch
+from bert_score import score
+from src.utils.utils import init_logger
+from dspy.evaluate import Evaluate
 
 #######################################################################
 # TenderDataset
 #######################################################################
-
-
 class TenderDataset(Dataset):
     """Class to load the data in the format required by DSPy for training. It reads the data from a list of Excel files and splits it into training, development, and test sets. The Excel files are expected to have the following columns: 'procurement_id', 'doc_name', 'text', and 'objetivo'. It is assumed that these files have been generated via manual curation by public administrations.
     """
@@ -38,10 +39,12 @@ class TenderDataset(Dataset):
         self._test = []
 
         # Read the training data
-        paths = [path for path in data_fpath.iterdir()]
+        paths = [path for path in pathlib.Path(data_fpath).iterdir()]
         all_dfs = []
         for path_ in tqdm(paths):
             df = pd.read_excel(path_)
+            # Limit text to 4000 characters for training
+            df["text"] = df["text"].apply(lambda x: x[0:4000])
             all_dfs.append(df)
         train_data = pd.concat(all_dfs)
 
@@ -67,8 +70,6 @@ class TenderDataset(Dataset):
 #######################################################################
 # ExtractObjective
 #######################################################################
-
-
 class PredictObjective(dspy.Signature):
     """
     Extract the objective of the contract from a document containing the technical specifications of a Spanish public tender. If the objective is not present in the document, return '/'.
@@ -90,19 +91,37 @@ class ObjetiveExtractorModule(dspy.Module):
         super().__init__()
         self.predict = dspy.Predict(PredictObjective)
 
+        self.no_objective_variations = [
+            '/', '/ (no present)', '/ (no objective present in the document)',
+            'No objective is present in the document.', '/ (not present)',
+            '/ (No objective present in the document)',
+            '/ (not present in the document)', "'/'", 'N/A', '/.',
+            '/ (no objective present in the document).',
+            '/ (No objective present in the document).',
+            'No objective present.', "'/' (not present in the document)",
+            '/ (No present)', "'/'.", 'No present.',
+            '/ (no objective is present in the document)',
+            'No objective is present in this document.',
+            'The objective of the tender is not present in the document.'
+        ]
+
     def _process_output(self, text):
 
-        if "N_A" in text:
+        if text in self.no_objective_variations or "N_A" in text or "N/A" in text or "NA" in text:
             return "/"
         else:
             return text
 
     def forward(self, text):
-        pred = self.predict(TENDER=text[0:5000])
+        print("** ** the length of the text is: ", len(text))
+        pred = self.predict(TENDER=text)
 
         return dspy.Prediction(objective=self._process_output(pred.OBJECTIVE))
 
 
+#######################################################################
+# ObjetiveExtractor
+#######################################################################
 class ObjetiveExtractor(object):
     def __init__(
         self,
@@ -121,20 +140,22 @@ class ObjetiveExtractor(object):
 
         # Dspy settings
         if model_type == "llama":
-            lm = dspy.HFClientTGI(model="meta-llama/Meta-Llama-3-8B ",
-                                  port=8080, url="http://127.0.0.1")
+            self.lm = dspy.HFClientTGI(model="meta-llama/Meta-Llama-3-8B ",
+                                       port=8080, url="http://127.0.0.1")
         elif model_type == "openai":
             load_dotenv(path_open_api_key)
             api_key = os.getenv("OPENAI_API_KEY")
             os.environ["OPENAI_API_KEY"] = api_key
-            lm = dspy.OpenAI(model=open_ai_model)
-        dspy.settings.configure(lm=lm)
+            self.lm = dspy.OpenAI(model=open_ai_model)
+        dspy.settings.configure(lm=self.lm)
 
         if not do_train:
             if not pathlib.Path(trained_promt).exists():
                 self._logger.error("-- -- Trained prompt not found. Exiting.")
                 return
-            self.module = ObjetiveExtractorModule.load(trained_promt)
+            oe = ObjetiveExtractorModule()
+            oe.load(trained_promt)
+            self.module = oe
 
             self._logger.info(
                 f"-- -- ObjetiveExtractorModule loaded from {trained_promt}")
@@ -200,7 +221,37 @@ class ObjetiveExtractor(object):
 
         return combined
 
-    def optimize_module(self, data_path, mbd=4, mld=16, ncp=16, mr=1, dev_size=0.25):
+    def get_bert_score(self, df):
+
+        model_name = "microsoft/deberta-xlarge-mnli"
+
+        P, R, F1 = score(df.PREDICTED.values.tolist(
+        ), df.GROUND.values.tolist(), lang='es', model_type=model_name)
+
+        df["P"] = P
+        df["R"] = R
+        df["F1"] = F1
+
+        return df
+
+    def get_in_text_score(self, df, objective_column):
+        if df[objective_column] == "/":
+            return 0.0
+
+        text_lst = df.extracted[0:5000].lower().split()
+        predicted_lst = df[objective_column].lower().split()
+
+        words_not_in_text = [
+            word for word in predicted_lst if word not in text_lst]
+        num_words_not_in_text = len(words_not_in_text)
+
+        total_predicted_words = len(predicted_lst)
+        score = max(
+            0.0, 1.0 - (num_words_not_in_text / total_predicted_words))
+
+        return score
+
+    def optimize_module(self, data_path, mbd=4, mld=16, ncp=2, mr=1, dev_size=0.25):  # mld=16
 
         # Create dataset
         dataset = TenderDataset(
@@ -208,27 +259,134 @@ class ObjetiveExtractor(object):
             dev_size=dev_size,
         )
 
+        self._logger.info(f"-- -- Dataset loaded from {data_path}")
+
         trainset = dataset._train
         devset = dataset._dev
         testset = dataset._test
+
+        self._logger.info(
+            f"-- -- Dataset split into train, dev, and test. Training module...")
 
         config = dict(max_bootstrapped_demos=mbd, max_labeled_demos=mld,
                       num_candidate_programs=ncp, max_rounds=mr)
         teleprompter = BootstrapFewShotWithRandomSearch(
             metric=self.combined_score, **config)
+
         compiled_pred = teleprompter.compile(
             ObjetiveExtractorModule(), trainset=trainset, valset=devset)
+
+        self._logger.info(f"-- -- Module compiled. Evaluating on test set...")
 
         # Apply on test set
         tests = []
         for el in testset:
-            output = compiled_pred(el.text)
+            output = compiled_pred(el.text[0:5000])
             tests.append([el.text[0:5000], el.objetivo,
-                         output["objective"], self.combined_score(el, output)])
+                          output["objective"], self.combined_score(el, output)])
 
-        mean = pd.DataFrame(tests, columns=["TEXT", "GROUND", "PREDICTED", "METRIC"])[
-            "METRIC"].mean()
+        df = pd.DataFrame(
+            tests, columns=["TEXT", "GROUND", "PREDICTED", "METRIC"])
+        df = self.get_bert_score(df)
 
-        self._logger.info(f"-- -- Mean score on test set: {mean}")
+        self._logger.info(
+            f"-- -- BERT score on test set: {df[['P', 'R', 'F1']].mean()}")
+        self._logger.info(
+            f"-- -- Mean score on test set: {df['METRIC'].mean()}")
+        print(
+            f"-- -- BERT score on test set: {df[['P', 'R', 'F1']].mean()}")
+        print(
+            f"-- -- Mean score on test set: {df['METRIC'].mean()}")
+
+        evaluate = Evaluate(
+            devset=devset, metric=self.combined_score, num_threads=1, display_progress=True)
+        compiled_score = evaluate(compiled_pred)
+        uncompiled_score = evaluate(ObjetiveExtractorModule())
+
+        print(
+            f"## ObjetiveExtractorModule Score for uncompiled: {uncompiled_score}")
+        print(
+            f"## ObjetiveExtractorModule Score for compiled: {compiled_score}")
+        print(f"Compilation Improvement: {compiled_score - uncompiled_score}%")
 
         return compiled_pred
+
+    def predict(self, df, token_starts=[0, 1000, 2000, 3000, 4000]):
+        def extract_objective_and_score(df, start_token=0, score_column="in_text_score", objective_column="objective"):
+            for index, row in tqdm(df.iterrows(), total=len(df)):
+                nr_tokens = 5000
+                while True:
+                    try:
+                        extracted_text = row.extracted[start_token:start_token + nr_tokens]
+                        # Debug print
+                        print(
+                            f"Extracted text for index {index} (first 100 chars): {extracted_text[:100]}")
+                        objective = self.module(extracted_text)["objective"]
+                        # Debug print
+                        print(f"Module output for index {index}: {objective}")
+                        df.loc[index, objective_column] = objective
+                        # Debug print
+                        print(
+                            f"DataFrame updated with {objective_column} for index {index}")
+                        break
+                    except Exception as e:
+                        # Debug print
+                        print(f"Exception at index {index}: {e}")
+                        nr_tokens -= 500
+                        if nr_tokens <= 0:
+                            df.loc[index, objective_column] = None
+                            # Debug print
+                            print(
+                                f"{objective_column} set to None for index {index}")
+                            break
+                score = self.get_in_text_score(df.loc[index], objective_column)
+                print(f"Score for index {index}: {score}")
+                df.loc[index, score_column] = score
+            return df
+
+        def process_extractions(df, score_column, objective_column):
+            best_scores = {}
+            best_objectives = {}
+            replacement_logs = []
+
+            for start_token in token_starts:
+                df_temp = extract_objective_and_score(df.copy(
+                ), start_token=start_token, score_column=score_column, objective_column=objective_column)
+                replacements = 0
+
+                for index, row in df_temp.iterrows():
+                    current_score = row[score_column]
+                    if index not in best_scores or current_score > best_scores[index]:
+                        if index in best_scores:
+                            replacements += 1
+                        best_scores[index] = current_score
+                        best_objectives[index] = row[objective_column]
+
+                replacement_logs.append((start_token, replacements))
+                print(
+                    f"Replacements in iteration with start token {start_token}: {replacements}")
+
+            for index in df.index:
+                df.loc[index, objective_column] = best_objectives.get(
+                    index, None)
+                df.loc[index, score_column] = best_scores.get(index, 0.0)
+
+            return df, replacement_logs
+
+        # Initialize columns
+        df["objective"] = None
+        df["in_text_score"] = None
+
+        # Perform extractions and get the best results
+        df, replacement_logs = process_extractions(
+            df, score_column="in_text_score", objective_column="objective")
+
+        # Print the replacement logs
+        print("Summary of replacements in each iteration:")
+        for start_token, replacements in replacement_logs:
+            print(f"Start token {start_token}: {replacements} replacements")
+
+        import pdb
+        pdb.set_trace()
+
+        return df
