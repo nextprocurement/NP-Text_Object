@@ -133,7 +133,7 @@ class ObjetiveExtractor(object):
         do_train=False,
         logger: logging.Logger = None,
         path_logs: pathlib.Path = pathlib.Path(
-            __file__).parent.parent / "data/logs"
+            __file__).parent.parent.parent / "data/logs"
     ):
 
         self._logger = logger if logger else init_logger(__name__, path_logs)
@@ -234,11 +234,11 @@ class ObjetiveExtractor(object):
 
         return df
 
-    def get_in_text_score(self, df, objective_column):
+    def get_in_text_score(self, df, objective_column, start_token, nr_tokens): 
         if df[objective_column] == "/":
             return 0.0
 
-        text_lst = df.extracted[0:5000].lower().split()
+        text_lst = df.extracted[start_token:start_token + nr_tokens].lower().split()
         predicted_lst = df[objective_column].lower().split()
 
         words_not_in_text = [
@@ -339,7 +339,7 @@ class ObjetiveExtractor(object):
                             print(
                                 f"{objective_column} set to None for index {index}")
                             break
-                score = self.get_in_text_score(df.loc[index], objective_column)
+                score = self.get_in_text_score(df.loc[index], objective_column, start_token, nr_tokens)
                 print(f"Score for index {index}: {score}")
                 df.loc[index, score_column] = score
             return df
@@ -385,8 +385,5 @@ class ObjetiveExtractor(object):
         print("Summary of replacements in each iteration:")
         for start_token, replacements in replacement_logs:
             print(f"Start token {start_token}: {replacements} replacements")
-
-        import pdb
-        pdb.set_trace()
 
         return df
