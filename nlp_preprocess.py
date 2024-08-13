@@ -5,13 +5,13 @@ import subprocess
 if __name__ == '__main__':
     # Parse arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", type=str, required=False, help="Path to the input file", default="/export/data_ml4ds/NextProcurement/PLACE/pliegos_objectives/all_extracted_29jul_sample1000_es.parquet")
-    parser.add_argument("--output", type=str, required=False, help="Path to the output file", default="/export/data_ml4ds/NextProcurement/PLACE/pliegos_objectives_preprocessed/all_extracted_29jul_sample1000_es.parquet")
+    parser.add_argument("--input", type=str, required=False, help="Path to the input file", default="/export/data_ml4ds/NextProcurement/PLACE/pliegos_objectives/all_extracted_12aug_es.parquet")
+    parser.add_argument("--output", type=str, required=False, help="Path to the output file", default="/export/data_ml4ds/NextProcurement/PLACE/pliegos_objectives_preprocessed/all_extracted_12aug_es.parquet")
     
     args = parser.parse_args()
 
     # Correct the replacement syntax for out_save
-    out_save = pathlib.Path(str(args.output).replace("all_extracted_29jul_sample1000_es.parquet", "pliegos.parquet"))
+    out_save = pathlib.Path(str(args.output).replace("all_extracted_12aug_es.parquet", "pliegos.parquet"))
     
     # Copy input file to temporary file
     subprocess.run(["cp", args.input, str(out_save)])

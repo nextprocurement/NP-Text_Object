@@ -7,22 +7,23 @@ if __name__ == '__main__':
     
     # Parse arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument('--input', type=str, required=False, help='Path to the input file', default="/export/data_ml4ds/NextProcurement/PLACE/pliegos_objectives/all_extracted_29jul_sample1000_es.parquet")
-    parser.add_argument('--output', type=str, required=False, help='Path to the output file', default="/export/data_ml4ds/NextProcurement/PLACE/pliegos_objectives/all_extracted_29jul_sample1000_es.parquet")
+    parser.add_argument('--input', type=str, required=False, help='Path to the input file', default="/export/data_ml4ds/NextProcurement/PLACE/pliegos_extracted/all_extracted_12aug_es.parquet")
+    parser.add_argument('--output', type=str, required=False, help='Path to the output file', default="/export/data_ml4ds/NextProcurement/PLACE/pliegos_objectives/all_extracted_12aug_es.parquet")
     
     args = parser.parse_args()
     
     oe = ObjetiveExtractor(do_train=False)
     
     df = pd.read_parquet(args.input)
-    
+        
+    time_start = time.time()
     try:
-        time_start = time.time()
         print("-- -- Extracting objectives")
         df = oe.predict(df)
-        time_end = time.time()
     except Exception as e:
         print(f'Error: {e}')
+    
+    time_end = time.time()
     
     print(
         f'-- -- Time elapsed for objective extraction: {time_end - time_start}')

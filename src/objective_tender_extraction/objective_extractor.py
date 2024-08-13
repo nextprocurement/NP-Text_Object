@@ -141,7 +141,7 @@ class ObjetiveExtractor(object):
         # Dspy settings
         if model_type == "llama":
             self.lm = dspy.HFClientTGI(model="meta-llama/Meta-Llama-3-8B ",
-                                       port=8080, url="http://127.0.0.1")
+                                       port=8090, url="http://127.0.0.1")
         elif model_type == "openai":
             load_dotenv(path_open_api_key)
             api_key = os.getenv("OPENAI_API_KEY")
@@ -246,8 +246,13 @@ class ObjetiveExtractor(object):
         num_words_not_in_text = len(words_not_in_text)
 
         total_predicted_words = len(predicted_lst)
-        score = max(
-            0.0, 1.0 - (num_words_not_in_text / total_predicted_words))
+        
+        second = 0.0
+        try:
+            second = 1.0 - (num_words_not_in_text / total_predicted_words)
+        except ZeroDivisionError:
+            self._logger.error("-- -- ZeroDivisionError in get_in_text_score")
+        score = max(0.0, second)
 
         return score
 
@@ -312,30 +317,29 @@ class ObjetiveExtractor(object):
         return compiled_pred
 
     def predict(self, df, token_starts=[0, 1000, 2000, 3000, 4000]):
+        
         def extract_objective_and_score(df, start_token=0, score_column="in_text_score", objective_column="objective"):
             for index, row in tqdm(df.iterrows(), total=len(df)):
                 nr_tokens = 5000
                 while True:
                     try:
                         extracted_text = row.extracted[start_token:start_token + nr_tokens]
-                        # Debug print
+
                         print(
                             f"Extracted text for index {index} (first 100 chars): {extracted_text[:100]}")
                         objective = self.module(extracted_text)["objective"]
-                        # Debug print
+
                         print(f"Module output for index {index}: {objective}")
                         df.loc[index, objective_column] = objective
-                        # Debug print
+
                         print(
                             f"DataFrame updated with {objective_column} for index {index}")
                         break
                     except Exception as e:
-                        # Debug print
                         print(f"Exception at index {index}: {e}")
                         nr_tokens -= 500
                         if nr_tokens <= 0:
                             df.loc[index, objective_column] = None
-                            # Debug print
                             print(
                                 f"{objective_column} set to None for index {index}")
                             break
@@ -378,9 +382,8 @@ class ObjetiveExtractor(object):
         df["in_text_score"] = None
 
         # Perform extractions and get the best results
-        df, replacement_logs = process_extractions(
-            df, score_column="in_text_score", objective_column="objective")
-
+        df, replacement_logs = process_extractions(df,score_column="in_text_score", objective_column="objective")
+        
         # Print the replacement logs
         print("Summary of replacements in each iteration:")
         for start_token, replacements in replacement_logs:
