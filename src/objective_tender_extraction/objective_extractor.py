@@ -1,5 +1,6 @@
 import logging
 import pathlib
+import pickle
 import pandas as pd
 from tqdm import tqdm
 import os
@@ -83,7 +84,7 @@ class PredictObjective(dspy.Signature):
     TENDER = dspy.InputField(
         desc="The document containing the technical specifications of the Spanish public tender.")
     OBJECTIVE = dspy.OutputField(
-        desc="The tender objective, or 'N_A' if not present.")
+        desc="The tender objective, or '/' if not present.")
 
 
 class ObjetiveExtractorModule(dspy.Module):
@@ -316,10 +317,15 @@ class ObjetiveExtractor(object):
 
         return compiled_pred
 
-    def predict(self, df, token_starts=[0, 1000, 2000, 3000, 4000]):
+    def predict(self, df, token_starts=[0, 1000, 2000, 3000, 4000], checkpoint_path="checkpoint.pkl", save_interval=10):
         
         def extract_objective_and_score(df, start_token=0, score_column="in_text_score", objective_column="objective"):
+            
+            processed_column = f'processed_{start_token}'
             for index, row in tqdm(df.iterrows(), total=len(df)):
+                if row[processed_column]:
+                    continue  # Skip rows that are already processed for this token_start
+                
                 nr_tokens = 5000
                 while True:
                     try:
@@ -346,6 +352,16 @@ class ObjetiveExtractor(object):
                 score = self.get_in_text_score(df.loc[index], objective_column, start_token, nr_tokens)
                 print(f"Score for index {index}: {score}")
                 df.loc[index, score_column] = score
+                
+                # Mark this row as processed for this token_start
+                df.loc[index, processed_column] = True
+
+                # Save checkpoint after every `save_interval` rows
+                if index % save_interval == 0:
+                    print(f"-- -- Saving checkpoint to {checkpoint_path} at row {index}")
+                    with open(checkpoint_path, 'wb') as f:
+                        pickle.dump(df, f)
+
             return df
 
         def process_extractions(df, score_column, objective_column):
@@ -354,6 +370,13 @@ class ObjetiveExtractor(object):
             replacement_logs = []
 
             for start_token in token_starts:
+                print("*" * 50)
+                print(f"-- -- Processing start token {start_token}")
+                print("*" * 50)
+                processed_column = f'processed_{start_token}'
+                if processed_column not in df.columns:
+                    df[processed_column] = False  # Initialize processed column for this token_start
+
                 df_temp = extract_objective_and_score(df.copy(
                 ), start_token=start_token, score_column=score_column, objective_column=objective_column)
                 replacements = 0
@@ -366,6 +389,8 @@ class ObjetiveExtractor(object):
                         best_scores[index] = current_score
                         best_objectives[index] = row[objective_column]
 
+                df[processed_column] = df_temp[processed_column]
+                
                 replacement_logs.append((start_token, replacements))
                 print(
                     f"Replacements in iteration with start token {start_token}: {replacements}")
@@ -377,13 +402,26 @@ class ObjetiveExtractor(object):
 
             return df, replacement_logs
 
-        # Initialize columns
-        df["objective"] = None
-        df["in_text_score"] = None
+        # Load checkpoint if it exists
+        if os.path.exists(checkpoint_path):
+            print(f"Loading checkpoint from {checkpoint_path}")
+            with open(checkpoint_path, 'rb') as f:
+                df = pickle.load(f)
+
+        # Initialize columns if not already done
+        if "objective" not in df.columns:
+            df["objective"] = None
+        if "in_text_score" not in df.columns:
+            df["in_text_score"] = None
 
         # Perform extractions and get the best results
-        df, replacement_logs = process_extractions(df,score_column="in_text_score", objective_column="objective")
-        
+        df, replacement_logs = process_extractions(df, score_column="in_text_score", objective_column="objective")
+
+        # Final save at the end of processing
+        print(f"Final save to {checkpoint_path}")
+        with open(checkpoint_path, 'wb') as f:
+            pickle.dump(df, f)
+
         # Print the replacement logs
         print("Summary of replacements in each iteration:")
         for start_token, replacements in replacement_logs:

@@ -15,7 +15,7 @@ if __name__ == '__main__':
     oe = ObjetiveExtractor(do_train=False)
     
     df = pd.read_parquet(args.input)
-        
+            
     time_start = time.time()
     try:
         print("-- -- Extracting objectives")
