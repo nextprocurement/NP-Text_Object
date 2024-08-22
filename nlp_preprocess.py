@@ -13,7 +13,7 @@ if __name__ == '__main__':
 
     for el in tqdm(pathlib.Path(args.input).rglob('*')):
         
-        this_out_save = pathlib.Path(args.outout).joinpath(f"{el.stem}.parquet")
+        this_out_save = pathlib.Path(args.output).joinpath(f"{el.stem}.parquet")
 
         # Correct the replacement syntax for out_save
         out_save = this_out_save.as_posix().replace(f"{el.stem}.parquet", "pliegos.parquet")
@@ -25,7 +25,7 @@ if __name__ == '__main__':
         source_path = str(out_save)
         source_type = "parquet"
         source = "pliegos"
-        destination_path = this_out_save
+        destination_path = this_out_save.as_posix()
         spacy_model = "es_core_news_md"
         lang = "es"
 
