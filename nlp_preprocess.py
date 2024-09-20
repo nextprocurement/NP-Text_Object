@@ -37,7 +37,8 @@ if __name__ == '__main__':
             "--source", source,
             "--destination_path", destination_path,
             "--lang", lang,
-            "--spacy_model", spacy_model
+            "--spacy_model", spacy_model,
+            "--do_embeddings"
         ]
 
         try:

@@ -10,7 +10,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--input', type=str, required=False, help='Path to the input file', default="/export/data_ml4ds/NextProcurement/PLACE/pliegos_extracted/all_extracted_12aug_es_parts")
     # parser.add_argument('--input', type=str, required=False, help='Path to the input file', default="/export/data_ml4ds/NextProcurement/PLACE/pliegos_extracted/all_extracted_12aug_es.parquet")
-    parser.add_argument('--output', type=str, required=False, help='Path to the output file', default="/export/data_ml4ds/NextProcurement/PLACE/pliegos_objectives/all_extracted_12aug_es")
+    parser.add_argument('--output', type=str, required=False, help='Path to the output file', default="/export/data_ml4ds/NextProcurement/PLACE/pliegos_objectives/all_extracted_19_sept_es")
     # parser.add_argument('--output', type=str, required=False, help='Path to the output file', default="/export/data_ml4ds/NextProcurement/PLACE/pliegos_objectives/all_extracted_12aug_es.parquet")
     parser.add_argument('--path_checkpoints', type=str, required=False, help='Path to the checkpoint files', default="/export/data_ml4ds/NextProcurement/PLACE/checkpoints")
 
