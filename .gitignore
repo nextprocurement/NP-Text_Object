@@ -163,3 +163,9 @@ cython_debug/
 local_cache
 .venv_preproc
 checkpoint.pkl
+
+
+
+.DS_Store
+data/.DS_Store
+data/objectives_with_metadata
