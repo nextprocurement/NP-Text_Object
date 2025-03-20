@@ -4,7 +4,7 @@
 
 This project provides a module for extracting the "objective" from Spanish tenders, specifically from the "Pliegos de Condiciones Técnicas". Given raw text extracted from these documents, an LLM processes chunks of size 2000, starting from different tokens, and attempts to extract the objective. The best extraction is determined using an "in_text_score", calculated as:
 
-$$\text{in\_text\_score} = 0.5 \times J(A, B) + 0.5 \times P $$
+$$in\_text\_score = 0.5 \times J(A, B) + 0.5 \times P $$
 
 where:
 - \( J(A, B) \) represents the **Jaccard similarity** between the extracted objective (\( A \)) and the original text (\( B \)).
