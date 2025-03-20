@@ -169,3 +169,8 @@ checkpoint.pkl
 .DS_Store
 data/.DS_Store
 data/objectives_with_metadata
+.vscode
+/export/usuarios_ml4ds/lbartolome/NextProcurement/NP-Text_Object/cache_final
+node_modules
+.venv2
+data
