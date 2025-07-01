@@ -174,3 +174,4 @@ data/objectives_with_metadata
 node_modules
 .venv2
 data
+.venv_kumo
