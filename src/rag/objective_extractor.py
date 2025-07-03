@@ -31,6 +31,7 @@ class ObjectiveExtractor(object):
         
         self.embed_model = HuggingFaceEmbedding(model_name=config.get("embedding_model"))
         self.node_parser = SentenceSplitter(chunk_size=config.get("chunk_size"), chunk_overlap=config.get("chunk_overlap"))
+        self._logger.info(f"Initializing prompter with model type: {config.get('llm_model_type')}")
         self.prompter = Prompter(model_type=config.get("llm_model_type"))
         self.calculate_on = config.get("calculate_on")
         
@@ -64,6 +65,7 @@ class ObjectiveExtractor(object):
                 prompt = self.extractive_prompt.format(context=context)
             else:
                 raise ValueError("Invalid option. Use 'generative' or 'extractive'.")
+            #import pdb; pdb.set_trace()
             result, _ = self.prompter.prompt(question=prompt, use_context=False)
             return result.strip()
         except Exception as e:
@@ -118,13 +120,14 @@ def main():
     arparser.add_argument("--path_to_parquet", type=str, default="/export/data_ml4ds/NextProcurement/Junio_2025/pliegosPlace/red_data_insiders_2024_chunks/part_0000.parquet", help="Path to the input parquet file")
     arparser.add_argument("--path_save", type=str, default="/export/data_ml4ds/NextProcurement/Junio_2025/pliegosPlace_withExtracted", help="Path to save the output parquet file")
     arparser.add_argument("--calculate_on", type=str, default="texto_tecnico", help="Column to calculate the objective on")
-    arparser.add_argument("--llm_model_type", type=str, default="qwen:32b", help="LLM model type to use for extraction")
+    arparser.add_argument("--llm_model_type", type=str, default="llama3.1:8b", help="LLM model type to use for extraction")
     
     args = arparser.parse_args()
     
     extractor = ObjectiveExtractor(
         config_path=pathlib.Path(args.config),
-        calculate_on=args.calculate_on
+        calculate_on=args.calculate_on,
+        llm_model_type=args.llm_model_type
     )
     
     # read parquet file
@@ -136,7 +139,7 @@ def main():
     extractor._logger.info("Loaded dataframe with %d rows", len(df))
     
     # @TODO: remove this  
-    df = df.sample(n=3, random_state=42)
+    df = df.sample(n=20, random_state=42)
     
     # enusre path save exists
     extractor._logger.info(f"Creating save path: {args.path_save}")
