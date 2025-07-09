@@ -175,3 +175,4 @@ node_modules
 .venv2
 data
 .venv_kumo
+.venv_hator

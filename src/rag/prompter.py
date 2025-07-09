@@ -29,6 +29,7 @@ class Prompter:
         seed: int = None,
         max_tokens: int = None,
         openai_key: str = None,
+        ollama_host: str = None,
     ):
         self._logger = logger if logger else init_logger(config_path, __name__)
         self.config = load_yaml_config_file(config_path, "llm", logger)
@@ -80,9 +81,11 @@ class Prompter:
                     raise ValueError("OpenAI API key not found. Please set it in the .env file or pass it as an argument.")
             
         elif model_type in self.OLLAMA_MODELS:
-            ollama_host = self.config.get("ollama", {}).get(
-                "host", "http://kumo01.tsc.uc3m.es:11434"
-            )
+            if ollama_host is None:
+                self._logger.info("Setting OLLAMA host from config file....")
+                ollama_host = self.config.get("ollama", {}).get(
+                    "host", "http://kumo01.tsc.uc3m.es:11434"
+                )
             os.environ['OLLAMA_HOST'] = ollama_host
             self.backend = "ollama"
             # Initialize as class-level variable to be able to use it in the cache function

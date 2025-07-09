@@ -16,7 +16,8 @@ extractor:
   calculate_on: texto_administrativo # texto_tecnico
   chunk_size: 512
   chunk_overlap: 64
-  embedding_model: jinaai/jina-embeddings-v2-base-es
+  embedding_model: paraphrase-multilingual-MiniLM-L12-v2
+  translation_model: projecte-aina/aina-translator-ca-es
   top_k: 4
   llm_model_type: llama3.1:8b
   templates:
@@ -65,7 +66,7 @@ llm:
       "llama3.1:8b",
       "deepseek-v3:latest"
     }
-    host: http://kumo.tsc.uc3m.es:11434
+    host: http://kumo01.tsc.uc3m.es:11434
   vllm:
     available_models: {
       "Qwen/Qwen3-8B",
