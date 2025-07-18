@@ -18,8 +18,13 @@ extractor:
   chunk_overlap: 64
   embedding_model: paraphrase-multilingual-MiniLM-L12-v2
   translation_model: projecte-aina/aina-translator-ca-es
-  top_k: 4
+  top_k: 20
+  max_k: 10
+  min_k: 3
+  fusion_alpha: 0.5
   llm_model_type: llama3.1:8b
+  llm_model_type_gen: mixtral:8x22b
+  llm_model_type_ex: falcon3:10b-instruct-fp16
   templates:
     extractive: src/rag/templates/extractive.txt
     generative: src/rag/templates/generative.txt
@@ -59,6 +64,9 @@ llm:
     path_api_key: .env
   ollama:
     available_models: {
+      "mixtral:8x22b",
+      "falcon3:10b-instruct-fp16",
+      "qwen3:8b",
       "llama3.2",
       "llama3.1:8b-instruct-q8_0",
       "qwen:32b",
@@ -66,7 +74,7 @@ llm:
       "llama3.1:8b",
       "deepseek-v3:latest"
     }
-    host: http://kumo01.tsc.uc3m.es:11434
+    host: http://kumo02.tsc.uc3m.es:11434
   vllm:
     available_models: {
       "Qwen/Qwen3-8B",
