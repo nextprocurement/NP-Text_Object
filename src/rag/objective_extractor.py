@@ -101,25 +101,25 @@ class ObjectiveExtractor(object):
             doc = Document(text=text)
             nodes = self.node_parser.get_nodes_from_documents([doc])
             
-            #top_k = min(self.top_k, len(nodes))
+            top_k = min(self.top_k, len(nodes))
 
             # Setup retrievers
             vector_index = VectorStoreIndex(nodes, embed_model=self.embed_model)
-            vector_retriever = vector_index.as_retriever(similarity_top_k=self.top_k)
-            bm25_retriever = BM25Retriever.from_defaults(nodes=nodes, similarity_top_k=self.top_k)
+            vector_retriever = vector_index.as_retriever(similarity_top_k=top_k)
+            bm25_retriever = BM25Retriever.from_defaults(nodes=nodes, similarity_top_k=top_k)
 
             # Combine results manually
             query = "objeto del contrato, objeto de la contratación, tiene por objeto, objetivos del contrato, objeto del pliego, objectivo"
             
-            combined_nodes = self._combine_retrievers([bm25_retriever, vector_retriever], query, top_k=self.top_k)
+            combined_nodes = self._combine_retrievers([bm25_retriever, vector_retriever], query, top_k=top_k, fusion_alpha=self.fusion_alpha)
             
             print(f"Combined nodes: {len(combined_nodes)} retrieved nodes")
             
             retrieved_nodes = self.get_adaptive_top_k_from_combined(
-                combined_nodes, max_k=self.max_k, min_k=self.min_k, fusion_alpha=self.fusion_alpha
+                combined_nodes, max_k=self.max_k, min_k=self.min_k
             )
             
-            self._logger.info(f"Adaptive top-k nodes: {len(retrieved_nodes)}")
+            print(f"Adaptive top-k nodes: {len(retrieved_nodes)}")
             
             scores = [n.score for n in retrieved_nodes if n.score is not None]
             print(scores)
@@ -153,6 +153,7 @@ class ObjectiveExtractor(object):
             result, _ = prompter.prompt(question=prompt, use_context=False)
             return result.strip()
         except Exception as e:
+            print(f"EXCEPTION in extract(): {e}")
             return f"ERROR: {e}"
 
     # def _combine_retrievers(self, retrievers, query, top_k=4):
@@ -278,6 +279,9 @@ def main():
     else:
         llm_model_type_ex = args.llm_model_type_ex
         print(f"Using LLM model type for extractive extraction: {llm_model_type_ex}")
+        
+    fusion_alpha = args.fusion_alpha if args.fusion_alpha != -1 else None
+    print(f"Using fusion alpha: {fusion_alpha}")
     
     extractor = ObjectiveExtractor(
         config_path=pathlib.Path(args.config),
@@ -287,6 +291,7 @@ def main():
         llm_model_type_gen=llm_model_type_gen,
         embedding_model=args.embedding_model,
         top_k=args.top_k,
+        fusion_alpha=fusion_alpha
     )
     
     # read parquet file
@@ -298,7 +303,7 @@ def main():
     extractor._logger.info("Loaded dataframe with %d rows", len(df))
     
     # @TODO: remove this  
-    df = df.sample(n=20, random_state=55)
+    #df = df.sample(n=20, random_state=55)
     
     # enusre path save exists
     extractor._logger.info(f"Creating save path: {args.path_save}")
