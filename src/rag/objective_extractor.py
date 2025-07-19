@@ -2,6 +2,7 @@ import argparse
 import heapq
 import logging
 import pathlib
+from platform import node
 from langdetect import detect # type: ignore
 import ctranslate2 # type: ignore
 import pyonmttok # type: ignore
@@ -9,15 +10,26 @@ from huggingface_hub import snapshot_download # type: ignore
 
 from tqdm import tqdm  # type: ignore
 import pandas as pd  # type: ignore
+import re
 
 from llama_index.core import VectorStoreIndex, Document  # type: ignore
 from llama_index.core.node_parser import SentenceSplitter  # type: ignore
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding  # type: ignore
+from llama_index.core.schema import TextNode # type: ignore
 from llama_index.retrievers.bm25 import BM25Retriever  # type: ignore
 from prompter import Prompter
 
 from file_utils import load_yaml_config_file, init_logger
 
+
+class CleanedBM25Retriever(BM25Retriever):
+    def __init__(self, nodes, **kwargs):
+        cleaned_nodes = [self._clean_node(n) for n in nodes]
+        super().__init__(nodes=cleaned_nodes, **kwargs)
+
+    def _clean_node(self, node: TextNode) -> TextNode:
+        cleaned_text = re.sub(r"[:.,\"()\n\-]", " ", node.text.lower())
+        return TextNode(text=cleaned_text, id_=node.node_id, metadata=node.metadata)
 
 class ObjectiveExtractor(object):
     def __init__(
@@ -79,7 +91,7 @@ class ObjectiveExtractor(object):
         self._logger.debug(f"Retrieved scores: {scores}")
 
         # Heuristic: stop adding if big drop in score (confidence decay)
-        drop_threshold = 0.6  # relative drop
+        drop_threshold = 0.75  # relative drop
         top_nodes = [sorted_nodes[0]]
 
         for i in range(1, min(len(sorted_nodes), max_k)):
@@ -98,7 +110,11 @@ class ObjectiveExtractor(object):
     
     def extract(self, text, option="generative"):
         try:
-            doc = Document(text=text)
+            #doc = Document(text=text)
+            clean_text = re.sub(r'[\uf0b7]', '', text)         
+            clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+            
+            doc = Document(text=clean_text)
             nodes = self.node_parser.get_nodes_from_documents([doc])
             
             top_k = min(self.top_k, len(nodes))
@@ -106,10 +122,10 @@ class ObjectiveExtractor(object):
             # Setup retrievers
             vector_index = VectorStoreIndex(nodes, embed_model=self.embed_model)
             vector_retriever = vector_index.as_retriever(similarity_top_k=top_k)
-            bm25_retriever = BM25Retriever.from_defaults(nodes=nodes, similarity_top_k=top_k)
+            bm25_retriever = CleanedBM25Retriever(nodes=nodes, similarity_top_k=top_k)
 
             # Combine results manually
-            query = "objeto del contrato, objeto de la contratación, tiene por objeto, objetivos del contrato, objeto del pliego, objectivo"
+            query = "objeto del contrato, objeto de la contratación, tiene por objeto, objetivos del contrato, objeto del pliego, objectivo" #objecte"
             
             combined_nodes = self._combine_retrievers([bm25_retriever, vector_retriever], query, top_k=top_k, fusion_alpha=self.fusion_alpha)
             
@@ -155,55 +171,39 @@ class ObjectiveExtractor(object):
         except Exception as e:
             print(f"EXCEPTION in extract(): {e}")
             return f"ERROR: {e}"
-
-    # def _combine_retrievers(self, retrievers, query, top_k=4):
-    #     all_nodes = []
-    #     for retriever in retrievers:
-    #         all_nodes.extend(retriever.retrieve(query))
-
-    #     unique_nodes = {}
-    #     for n in all_nodes:
-    #         nid = n.node.node_id
-    #         if nid not in unique_nodes or (n.score or 0) > (unique_nodes[nid].score or 0):
-    #             unique_nodes[nid] = n
-
-    #     return heapq.nlargest(top_k, unique_nodes.values(), key=lambda x: x.score or 0)
     
     def _combine_retrievers(self, retrievers, query, top_k=4, fusion_alpha=0.5):
         all_nodes = []
-        source_map = {}  # track source by node_id
+        bm25_nodes = []
+        other_nodes = []
 
         for retriever in retrievers:
             name = type(retriever).__name__.lower()
-            print(f"Retrieving with {name} retriever")
-            results = retriever.retrieve(query)
-            all_nodes.extend(results)
-            for n in results:
-                source_map[n.node.node_id] = name
+            query_input = query.replace(",", " ") if "bm25" in name else query
+            results = retriever.retrieve(query_input)
+            
+            if "bm25" in name:
+                bm25_nodes.extend(results)
+            else:
+                other_nodes.extend(results)
 
-        # Separate scores by retriever
-        bm25_nodes = [n for n in all_nodes if 'bm25' in source_map.get(n.node.node_id, '')]
-        other_nodes = [n for n in all_nodes if 'bm25' not in source_map.get(n.node.node_id, '')]
-        
-        # Normalize BM25 scores (min-max)
-        if bm25_nodes:
-            bm25_scores = [n.score or 0 for n in bm25_nodes]
-            min_s, max_s = min(bm25_scores), max(bm25_scores)
-            for n in bm25_nodes:
-                norm = (n.score - min_s) / (max_s - min_s + 1e-5) if max_s > min_s else 0
-                n.score = norm
-                
-        # Normalize other retriever scores (min-max)
-        if other_nodes:
-            other_scores = [n.score or 0 for n in other_nodes]
-            min_s, max_s = min(other_scores), max(other_scores)
-            for n in other_nodes:
-                norm = (n.score - min_s) / (max_s - min_s + 1e-5) if max_s > min_s else 0
-                n.score = norm
-                
-        #print(f"Normalized BM25 scores: {[n.score for n in bm25_nodes]}")
-        #print(f"Normalized Other scores: {[n.score for n in other_nodes]}")
-        
+            all_nodes.extend(results)
+
+        # Normalize scores
+        def normalize(nodes):
+            if not nodes:
+                return
+            scores = [n.score or 0 for n in nodes]
+            min_s, max_s = min(scores), max(scores)
+            for n in nodes:
+                n.score = (n.score - min_s) / (max_s - min_s + 1e-5) if max_s > min_s else 0
+
+        normalize(bm25_nodes)
+        normalize(other_nodes)
+
+        print(f"BM25 scores: {[n.score for n in bm25_nodes]}")
+        print(f"Other scores: {[n.score for n in other_nodes]}")
+
         # Combine by node ID
         combined = {}
         for n in bm25_nodes + other_nodes:
@@ -213,11 +213,9 @@ class ObjectiveExtractor(object):
             else:
                 existing = combined[nid]
                 if fusion_alpha is not None:
-                    # Blend scores (assume existing is from other retriever)
                     combined_score = fusion_alpha * (existing.score or 0) + (1 - fusion_alpha) * (n.score or 0)
                     existing.score = combined_score
                 else:
-                    # Pick whichever has higher score
                     if (n.score or 0) > (existing.score or 0):
                         combined[nid] = n
 
@@ -226,7 +224,6 @@ class ObjectiveExtractor(object):
 
         self._logger.info(f"Combined scores: {[n.score for n in final_nodes]}")
         return final_nodes
-
 
     def apply_to_dataframe(self, df, mode="both"):
         tqdm.pandas()
@@ -315,8 +312,8 @@ def main():
     extractor._logger.info("Loaded dataframe with %d rows", len(df))
     
     # @TODO: remove this  
-    df = df.sample(n=2, random_state=55)
-    
+    #df = df.sample(n=5, random_state=55)
+
     # enusre path save exists
     extractor._logger.info(f"Creating save path: {args.path_save}")
     path_save = pathlib.Path(args.path_save)
@@ -325,7 +322,7 @@ def main():
     
     extractor._logger.info(f"Extracting objectives from {len(df)} rows in column '{args.calculate_on}'")
     df = extractor.apply_to_dataframe(df, mode=args.mode_extractive_generative)
-    
+    import pdb; pdb.set_trace()  # Debugging breakpoint to inspect df before saving
     # Save the dataframe to parquet
     extractor._logger.info("Saving dataframe to %s", path_save)
     df.to_parquet(path_save, index=False)
