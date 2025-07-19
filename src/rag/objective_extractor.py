@@ -175,6 +175,7 @@ class ObjectiveExtractor(object):
 
         for retriever in retrievers:
             name = type(retriever).__name__.lower()
+            print(f"Retrieving with {name} retriever")
             results = retriever.retrieve(query)
             all_nodes.extend(results)
             for n in results:
@@ -183,7 +184,7 @@ class ObjectiveExtractor(object):
         # Separate scores by retriever
         bm25_nodes = [n for n in all_nodes if 'bm25' in source_map.get(n.node.node_id, '')]
         other_nodes = [n for n in all_nodes if 'bm25' not in source_map.get(n.node.node_id, '')]
-
+        
         # Normalize BM25 scores (min-max)
         if bm25_nodes:
             bm25_scores = [n.score or 0 for n in bm25_nodes]
@@ -191,7 +192,18 @@ class ObjectiveExtractor(object):
             for n in bm25_nodes:
                 norm = (n.score - min_s) / (max_s - min_s + 1e-5) if max_s > min_s else 0
                 n.score = norm
-
+                
+        # Normalize other retriever scores (min-max)
+        if other_nodes:
+            other_scores = [n.score or 0 for n in other_nodes]
+            min_s, max_s = min(other_scores), max(other_scores)
+            for n in other_nodes:
+                norm = (n.score - min_s) / (max_s - min_s + 1e-5) if max_s > min_s else 0
+                n.score = norm
+                
+        #print(f"Normalized BM25 scores: {[n.score for n in bm25_nodes]}")
+        #print(f"Normalized Other scores: {[n.score for n in other_nodes]}")
+        
         # Combine by node ID
         combined = {}
         for n in bm25_nodes + other_nodes:
@@ -303,7 +315,7 @@ def main():
     extractor._logger.info("Loaded dataframe with %d rows", len(df))
     
     # @TODO: remove this  
-    #df = df.sample(n=20, random_state=55)
+    df = df.sample(n=2, random_state=55)
     
     # enusre path save exists
     extractor._logger.info(f"Creating save path: {args.path_save}")
