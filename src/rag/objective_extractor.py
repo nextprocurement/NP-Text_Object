@@ -108,56 +108,37 @@ class ObjectiveExtractor(object):
 
         return top_nodes
     
-    def extract(self, text, option="generative"):
+    def _prepare_context(self, text):
+        clean_text = re.sub(r'[\uf0b7]', '', text)
+        clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+        doc = Document(text=clean_text)
+        nodes = self.node_parser.get_nodes_from_documents([doc])
+        
+        top_k = min(self.top_k, len(nodes))
+        vector_index = VectorStoreIndex(nodes, embed_model=self.embed_model)
+        vector_retriever = vector_index.as_retriever(similarity_top_k=top_k)
+        bm25_retriever = CleanedBM25Retriever(nodes=nodes, similarity_top_k=top_k)
+
+        query = "objeto del contrato, objeto de la contratación, tiene por objeto, objetivos del contrato, objeto del pliego, objectivo"
+        combined_nodes = self._combine_retrievers([bm25_retriever, vector_retriever], query, top_k=top_k, fusion_alpha=self.fusion_alpha)
+        retrieved_nodes = self.get_adaptive_top_k_from_combined(combined_nodes, max_k=self.max_k, min_k=self.min_k)
+
+        context = [n.get_content() for n in retrieved_nodes]
+        detected_languages = [detect(fragment) for fragment in context]
+
+        catalan_count = detected_languages.count('ca')
+        if catalan_count / len(context) >= 0.75:
+            self._logger.info(f"Detected {catalan_count} Catalan fragments out of {len(context)}. Translating to Spanish.")
+            context = [
+                self.translate_ca_to_es(fragment) if lang == 'ca' else fragment
+                for fragment, lang in zip(context, detected_languages)
+            ]
+
+        return "\n\n".join(context)
+    
+    def extract(self, text, option="generative", precomputed_context=None):
         try:
-            #doc = Document(text=text)
-            clean_text = re.sub(r'[\uf0b7]', '', text)         
-            clean_text = re.sub(r'\s+', ' ', clean_text).strip()
-            
-            doc = Document(text=clean_text)
-            nodes = self.node_parser.get_nodes_from_documents([doc])
-            
-            top_k = min(self.top_k, len(nodes))
-
-            # Setup retrievers
-            vector_index = VectorStoreIndex(nodes, embed_model=self.embed_model)
-            vector_retriever = vector_index.as_retriever(similarity_top_k=top_k)
-            bm25_retriever = CleanedBM25Retriever(nodes=nodes, similarity_top_k=top_k)
-
-            # Combine results manually
-            query = "objeto del contrato, objeto de la contratación, tiene por objeto, objetivos del contrato, objeto del pliego, objectivo" #objecte"
-            
-            combined_nodes = self._combine_retrievers([bm25_retriever, vector_retriever], query, top_k=top_k, fusion_alpha=self.fusion_alpha)
-            
-            print(f"Combined nodes: {len(combined_nodes)} retrieved nodes")
-            
-            retrieved_nodes = self.get_adaptive_top_k_from_combined(
-                combined_nodes, max_k=self.max_k, min_k=self.min_k
-            )
-            
-            print(f"Adaptive top-k nodes: {len(retrieved_nodes)}")
-            
-            scores = [n.score for n in retrieved_nodes if n.score is not None]
-            print(scores)
-
-            # Create prompt and run
-            context = [n.get_content() for n in retrieved_nodes]
-            
-            # detect language in each context fragment
-            detected_languages = [detect(fragment) for fragment in context]
-            
-            # if 75 % (len(context)) has catalan as language, then translate to spanish using https://huggingface.co/projecte-aina/aina-translator-es-ca
-            catalan_count = detected_languages.count('ca')
-            catalan_ratio = catalan_count / len(context)
-            if catalan_ratio >= 0.75:
-                self._logger.info(f"Detected {catalan_count} Catalan fragments out of {len(context)}. Translating to Spanish.")
-                # Translate each Catalan fragment
-                context = [
-                    self.translate_ca_to_es(fragment) if lang == 'ca' else fragment
-                    for fragment, lang in zip(context, detected_languages)
-                ]
-                #print(f"translated context: {context}")
-            context_joint = "\n\n".join([c for c in context])
+            context_joint = precomputed_context or self._prepare_context(text)
             if option == "generative":
                 prompt = self.generative_prompt.format(context=context_joint)
                 prompter = self.prompter_gen
@@ -238,7 +219,7 @@ class ObjectiveExtractor(object):
         if mode not in valid_modes:
             raise ValueError(f"Invalid mode '{mode}'. Choose from {valid_modes}.")
 
-        if mode in ("extractive", "both"):
+        if mode == "extractive":
             time_start = pd.Timestamp.now()
             self._logger.info(f"Applying extractive objective extraction to column '{self.calculate_on}'")
             df["extracted_objective"] = df[self.calculate_on].progress_apply(
@@ -247,7 +228,7 @@ class ObjectiveExtractor(object):
             time_end = pd.Timestamp.now()
             self._logger.info("Extractive objective extraction completed in %.2f seconds", (time_end - time_start).total_seconds())
 
-        if mode in ("generative", "both"):
+        elif mode == "generative":
             time_start = pd.Timestamp.now()
             self._logger.info(f"Applying generative objective extraction to column '{self.calculate_on}'")
             df["generated_objective"] = df[self.calculate_on].progress_apply(
@@ -255,6 +236,23 @@ class ObjectiveExtractor(object):
             )
             time_end = pd.Timestamp.now()
             self._logger.info("Generative objective extraction completed in %.2f seconds", (time_end - time_start).total_seconds())
+            
+        elif mode == "both":
+            def process_both(text):
+                context = self._prepare_context(text)
+                return pd.Series({
+                    "extracted_objective": self.extract(text, option="extractive", precomputed_context=context),
+                    "generated_objective": self.extract(text, option="generative", precomputed_context=context),
+                })
+
+            self._logger.info(f"Applying both extractive and generative extraction to column '{self.calculate_on}'")
+            time_start = pd.Timestamp.now()
+            results = df[self.calculate_on].progress_apply(process_both)
+            df = pd.concat([df, results], axis=1)
+            time_end = pd.Timestamp.now()
+            self._logger.info("Both extractive and generative extraction completed in %.2f seconds", (time_end - time_start).total_seconds())
+        else:
+            raise ValueError(f"Invalid mode '{mode}'. Choose from 'extractive', 'generative', or 'both'.")
 
         return df
         
@@ -305,6 +303,9 @@ def main():
     
     # read parquet file
     df = pd.read_parquet(args.path_to_parquet)
+    
+    #df = df.sample(n=2, random_state=42)
+    
     if args.calculate_on == "texto_administrativo":
         df = df[df.resultado_administrativo == "Descargado correctamente"]
         df = df[~df['texto_administrativo'].str.startswith('[ERROR:')]
