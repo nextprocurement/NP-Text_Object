@@ -307,12 +307,11 @@ def main():
     df = pd.read_parquet(args.path_to_parquet)
     if args.calculate_on == "texto_administrativo":
         df = df[df.resultado_administrativo == "Descargado correctamente"]
+        df = df[~df['texto_administrativo'].str.startswith('[ERROR:')]
     elif args.calculate_on == "texto_tecnico":
         df = df[df.resultado_tecnico == "Descargado correctamente"]
+        df = df[~df['texto_tecnico'].str.startswith('[ERROR:')]
     extractor._logger.info("Loaded dataframe with %d rows", len(df))
-    
-    # @TODO: remove this  
-    #df = df.sample(n=5, random_state=55)
 
     # enusre path save exists
     extractor._logger.info(f"Creating save path: {args.path_save}")
@@ -322,7 +321,7 @@ def main():
     
     extractor._logger.info(f"Extracting objectives from {len(df)} rows in column '{args.calculate_on}'")
     df = extractor.apply_to_dataframe(df, mode=args.mode_extractive_generative)
-    import pdb; pdb.set_trace()  # Debugging breakpoint to inspect df before saving
+
     # Save the dataframe to parquet
     extractor._logger.info("Saving dataframe to %s", path_save)
     df.to_parquet(path_save, index=False)
