@@ -4,6 +4,7 @@ import logging
 import pathlib
 from platform import node
 from langdetect import detect # type: ignore
+from langdetect.lang_detect_exception import LangDetectException  # type: ignore
 import ctranslate2 # type: ignore
 import pyonmttok # type: ignore
 from huggingface_hub import snapshot_download # type: ignore
@@ -21,6 +22,14 @@ from prompter import Prompter
 
 from file_utils import load_yaml_config_file, init_logger
 
+
+def safe_detect(text):
+    try:
+        if text.strip():
+            return detect(text)
+    except LangDetectException:
+        pass
+    return None
 
 class CleanedBM25Retriever(BM25Retriever):
     def __init__(self, nodes, **kwargs):
@@ -124,7 +133,8 @@ class ObjectiveExtractor(object):
         retrieved_nodes = self.get_adaptive_top_k_from_combined(combined_nodes, max_k=self.max_k, min_k=self.min_k)
 
         context = [n.get_content() for n in retrieved_nodes]
-        detected_languages = [detect(fragment) for fragment in context]
+        #detected_languages = [detect(fragment) for fragment in context]
+        detected_languages = [lang for fragment in context if (lang := safe_detect(fragment)) is not None]
 
         catalan_count = detected_languages.count('ca')
         if catalan_count / len(context) >= 0.75:
