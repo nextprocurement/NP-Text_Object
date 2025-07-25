@@ -333,7 +333,7 @@ def main():
     # read parquet file
     df = pd.read_parquet(args.path_to_parquet)
     
-    df = df.sample(n=2, random_state=42)
+    #df = df.sample(n=2, random_state=42)
     
     if args.calculate_on == "texto_administrativo":
         df = df[df.resultado_administrativo == "Descargado correctamente"]
