@@ -33,7 +33,14 @@ def safe_detect(text):
 
 class CleanedBM25Retriever(BM25Retriever):
     def __init__(self, nodes, **kwargs):
-        cleaned_nodes = [self._clean_node(n) for n in nodes]
+        cleaned_nodes = [
+            self._clean_node(n) for n in nodes 
+            if self._clean_node(n).text.strip()
+        ]
+        
+        if not cleaned_nodes:
+            raise ValueError("CleanedBM25Retriever received no valid nodes after cleaning.")
+        
         super().__init__(nodes=cleaned_nodes, **kwargs)
 
     def _clean_node(self, node: TextNode) -> TextNode:
@@ -126,7 +133,11 @@ class ObjectiveExtractor(object):
         top_k = min(self.top_k, len(nodes))
         vector_index = VectorStoreIndex(nodes, embed_model=self.embed_model)
         vector_retriever = vector_index.as_retriever(similarity_top_k=top_k)
-        bm25_retriever = CleanedBM25Retriever(nodes=nodes, similarity_top_k=top_k)
+        try:
+            bm25_retriever = CleanedBM25Retriever(nodes=nodes, similarity_top_k=top_k)
+        except ValueError as e:
+            self._logger.warning(f"BM25Retriever could not be initialized: {e}")
+            bm25_retriever = None
 
         query = "objeto del contrato, objeto de la contratación, tiene por objeto, objetivos del contrato, objeto del pliego, objectivo"
         combined_nodes = self._combine_retrievers([bm25_retriever, vector_retriever], query, top_k=top_k, fusion_alpha=self.fusion_alpha)
@@ -169,10 +180,18 @@ class ObjectiveExtractor(object):
         other_nodes = []
 
         for retriever in retrievers:
+            if retriever is None:
+                self._logger.warning("Skipping None retriever.")
+                continue
+
             name = type(retriever).__name__.lower()
             query_input = query.replace(",", " ") if "bm25" in name else query
-            results = retriever.retrieve(query_input)
-            
+            try:
+                results = retriever.retrieve(query_input)
+            except Exception as e:
+                self._logger.warning(f"Retriever {name} failed with error: {e}")
+                continue
+                    
             if "bm25" in name:
                 bm25_nodes.extend(results)
             else:
@@ -314,7 +333,7 @@ def main():
     # read parquet file
     df = pd.read_parquet(args.path_to_parquet)
     
-    #df = df.sample(n=2, random_state=42)
+    df = df.sample(n=2, random_state=42)
     
     if args.calculate_on == "texto_administrativo":
         df = df[df.resultado_administrativo == "Descargado correctamente"]
